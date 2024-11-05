@@ -1,15 +1,23 @@
 from machine import Pin, PWM
 from ir_rx.nec import NEC_8 # Use the NEC 8-bit class
 from ir_rx.print_error import print_error # for debugging
+#from ir_tx.nec import NEC
 import time
 
 
 time.sleep(0.1)
 
+#IR Transmitter Testing
+#addr = 0x21
+#commands = [0x1]
+#ir_transmitter = NEC(Pin(16, Pin.OUT, value=0))
+
+
 #Global constants
 debounce_time = 100 #50ms debounce timer
 pwm_rate = 2000
 pwm = min(max(int(2**16 * abs(1)), 0), 65535)
+curr_motor_cond = -1
 
 #Assigning Pinouts
 rf_inputs = [Pin(i, Pin.IN) for i in [11, 12, 15, 14]]
@@ -21,25 +29,33 @@ ph = [Pin(9, Pin.OUT), Pin(7, Pin.OUT)]
 en = [PWM(8, freq=pwm_rate, duty_u16 = 0), PWM(6, freq=pwm_rate, duty_u16 = 0)]
 
 #Interrupt flags
-led_interrupt_flags = [0 for i in range(len(rf_inputs))]
+rf_interrupt_flags = [0 for i in range(len(rf_inputs))]
+ir_interrupt_flags = [0 for i in range(len(rf_inputs))]
 input_toggle = 1 # 1 - RF Receiver | 0 - IR Receiver
 
 #Defining ISRs
 def rf_ISR(input):
-    global interrupt_flags, rf_inputs
+    global rf_interrupt_flags, rf_inputs, input_toggle
     
-    index = rf_inputs.index(input)
-    print('rf input received on', index)
-    led_interrupt_flags[index] = index+1
+    if input_toggle:
+        index = rf_inputs.index(input)
+        print('RF input received on', index)
+        rf_interrupt_flags[index] = index+1
+    else:
+        print('RF input received on IR Mode. Input Ignored.')
     
 def ir_ISR(data, addr_, _):
-    global led_interrupt_flags, rf_inputs
+    global ir_interrupt_flags, rf_inputs, input_toggle
     
-    if addr_ > range(len(rf_inputs)):
-        return
+    if not input_toggle:
+        if addr_ != 0x21:
+            print('IR input received on improper address. Input Ignored.')
+            return
+        else:
+            print('IR input received on', addr_, 'with data', data)
+            ir_interrupt_flags[int(data)] = data+1
     else:
-        print('ir input received on', addr_, 'with data', data)
-        led_interrupt_flags[int(addr_)] = data
+        print('IR input received on RF Mode. Input Ignored.')
 
 debounce = 0
 def input_toggle_ISR(btn):
@@ -47,7 +63,10 @@ def input_toggle_ISR(btn):
     
     if (time.ticks_ms() - debounce > debounce_time):
         input_toggle = not input_toggle
-        print('input toggle is now', input_toggle)
+        if input_toggle:
+            print('Now in RF Mode')
+        else:
+            print('Now in IR Mode')
         debounce = time.ticks_ms()
 
 #Assigning IRQs
@@ -61,45 +80,73 @@ input_toggle_btn.irq(trigger=input_toggle_btn.IRQ_FALLING, handler=input_toggle_
 #Motor Control
 def set_motor(motor, cond):
     global ph, en
-    if cond == 0:   #Forwards
+    if cond == -1:    #Stop
+        en[motor].duty_u16(0)
+    elif cond == 0:   #Forwards
         ph[motor].low()
         en[motor].duty_u16(pwm)
-    elif cond == 1: #Backwards
+    elif cond == 1:   #Backwards
         ph[motor].high()
         en[motor].duty_u16(pwm)
         
 def motor_control(cond):
+    global curr_motor_cond
+    if (curr_motor_cond == cond):
+        print('Motors Stopped')
+        set_motor(0, -1)
+        set_motor(1, -1)
+        curr_motor_cond = -1
+        return
+    curr_motor_cond = cond
+    set_motor(0, -1)
+    set_motor(1, -1)
+    time.sleep(0.1) #Add delay to reduce back EMF
     if cond == 0:   #Forwards
+        print('Motors Forward')
         set_motor(0,0)
         set_motor(1,0)
     elif cond == 1: #Backwards
+        print('Motors Backward')
         set_motor(0,1)
         set_motor(1,1)
     elif cond == 2: #Turn Left
+        print('Motors Left')
         set_motor(0,1)
         set_motor(1,0)
     elif cond == 3: #Turn Right
+        print('Motors Right')
         set_motor(0,0)
         set_motor(1,1)
 
 #Main loop
 while True:
-    if sum(led_interrupt_flags) != 0:
-        for i in range(len(led_interrupt_flags)):
-            if led_interrupt_flags[i] != 0:
-                if input_toggle:
+    if input_toggle:
+        #RF Mode; Ignore IR flags
+        if sum(rf_interrupt_flags) != 0:
+            for i in range(len(rf_interrupt_flags)):
+                if rf_interrupt_flags[i] != 0:
                     #RF handler
                     print('toggling led on', i)
                     leds[i].toggle()
                     
-                    print('setting motors to condition', led_interrupt_flags[i]-1)
-                    motor_control(led_interrupt_flags[i]-1)
+                    print('setting motors to condition', rf_interrupt_flags[i]-1)
+                    motor_control(rf_interrupt_flags[i]-1)
                     
-                    led_interrupt_flags[i] = 0
-                else:
+                    rf_interrupt_flags[i] = 0
+    else:
+        #IR Mode; Ignore RF flags    
+        if sum(ir_interrupt_flags) != 0:
+            for i in range(len(ir_interrupt_flags)):
+                if ir_interrupt_flags[i] != 0:
                     #IR handler
                     print('toggling led on', i)
-                    print('ir data is', led_interrupt_flags[i])
                     leds[i].toggle()
-                    led_interrupt_flags[i] = 0
+                    
+                    print('setting motors to condition', ir_interrupt_flags[i]-1)
+                    motor_control(ir_interrupt_flags[i]-1)
+                    
+                    ir_interrupt_flags[i] = 0
+   # ir_transmitter.transmit(addr, commands[0])
+   # print('ir signal transmitted addr', addr, 'command', commands[0])
+   # time.sleep(3)
     continue

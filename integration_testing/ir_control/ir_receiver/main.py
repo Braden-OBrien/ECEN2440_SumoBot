@@ -9,7 +9,7 @@ def ir_callback(data, addr, _):
     print(f"Received NEC command! Data: 0x{data:02X}, Addr: 0x{addr:02X}")
 
 # Setup the IR receiver
-ir_pin = Pin(13, Pin.IN, Pin.PULL_UP) # Adjust the pin number based on your wiring
+ir_pin = Pin(10, Pin.IN, Pin.PULL_UP) # Adjust the pin number based on your wiring
 
 ir_receiver = NEC_8(ir_pin, callback=ir_callback)
 
