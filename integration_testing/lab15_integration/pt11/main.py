@@ -29,8 +29,8 @@ ph = [Pin(9, Pin.OUT), Pin(7, Pin.OUT)]
 en = [PWM(8, freq=pwm_rate, duty_u16 = 0), PWM(6, freq=pwm_rate, duty_u16 = 0)]
 
 #Interrupt flags
-rf_interrupt_flags = [0 for i in range(len(rf_inputs))]
-ir_interrupt_flags = [0 for i in range(len(rf_inputs))]
+rf_interrupt_flags = []
+ir_interrupt_flags = []
 input_toggle = 1 # 1 - RF Receiver | 0 - IR Receiver
 
 #Defining ISRs
@@ -40,7 +40,7 @@ def rf_ISR(input):
     if input_toggle:
         index = rf_inputs.index(input)
         print('RF input received on', index)
-        rf_interrupt_flags[index] = index+1
+        rf_interrupt_flags.append(index)
     else:
         print('RF input received on IR Mode. Input Ignored.')
     
@@ -53,7 +53,7 @@ def ir_ISR(data, addr_, _):
             return
         else:
             print('IR input received on', addr_, 'with data', data)
-            ir_interrupt_flags[int(data)] = data+1
+            ir_interrupt_flags.append(int(data))
     else:
         print('IR input received on RF Mode. Input Ignored.')
 
@@ -120,32 +120,19 @@ def motor_control(cond):
 
 #Main loop
 while True:
-    if input_toggle:
-        #RF Mode; Ignore IR flags
-        if sum(rf_interrupt_flags) != 0:
-            for i in range(len(rf_interrupt_flags)):
-                if rf_interrupt_flags[i] != 0:
-                    #RF handler
-                    print('toggling led on', i)
-                    leds[i].toggle()
-                    
-                    print('setting motors to condition', rf_interrupt_flags[i]-1)
-                    motor_control(rf_interrupt_flags[i]-1)
-                    
-                    rf_interrupt_flags[i] = 0
-    else:
-        #IR Mode; Ignore RF flags    
-        if sum(ir_interrupt_flags) != 0:
-            for i in range(len(ir_interrupt_flags)):
-                if ir_interrupt_flags[i] != 0:
-                    #IR handler
-                    print('toggling led on', i)
-                    leds[i].toggle()
-                    
-                    print('setting motors to condition', ir_interrupt_flags[i]-1)
-                    motor_control(ir_interrupt_flags[i]-1)
-                    
-                    ir_interrupt_flags[i] = 0
+    for flag_type in [rf_interrupt_flags, ir_interrupt_flags]:
+        for command in flag_type:
+            #Input handler
+            
+            print('Acting on flag_type', flag_type)
+            
+            print('toggling led on', command)
+            leds[command].toggle()
+            
+            print('setting motors to condition', command)
+            motor_control(command)
+                
+        flag_type.clear()
    # ir_transmitter.transmit(addr, commands[0])
    # print('ir signal transmitted addr', addr, 'command', commands[0])
    # time.sleep(3)
