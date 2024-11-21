@@ -2,19 +2,21 @@ from machine import Pin, PWM
 from ir_rx.nec import NEC_8 # Use the NEC 8-bit class
 #from ir_rx.print_error import print_error # for debugging
 from ir_tx.nec import NEC
+import adc_conv
 import time
 
 
 time.sleep(0.1)
 
 #IR Transmitter Testing
-addr = 0x21
-commands = [0x1]
-ir_transmitter = NEC(Pin(16, Pin.OUT, value=0))
+#addr = 0x21
+#commands = [0x1]
+#ir_transmitter = NEC(Pin(16, Pin.OUT, value=0))
 
 
 #Global constants
 debounce_time = 100 #50ms debounce timer
+bat_sample_time = 100
 pwm_rate = 2000
 pwm = min(max(int(2**16 * abs(1)), 0), 65535)
 curr_motor_cond = -1
@@ -133,7 +135,11 @@ while True:
             motor_control(command)
                 
         flag_type.clear()
-    ir_transmitter.transmit(addr, commands[0])
-    print('ir signal transmitted addr', addr, 'command', commands[0])
-    time.sleep(3)
+    
+   # adc_conv.sample_battery(bat_sample_time, )
+
+    
+   # ir_transmitter.transmit(addr, commands[0])
+   # print('ir signal transmitted addr', addr, 'command', commands[0])
+   # time.sleep(3)
     continue
