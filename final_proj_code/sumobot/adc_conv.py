@@ -16,4 +16,4 @@ def sample_battery(bat_sample_time, pin, ref_pin=None, adc_ref=3.3, vol_div=3, p
         bat_samples.append(pin.read_u16())
         #ref_samples.append(ref_pin.read_u16())
         
-    return vol_div*adc_ref*(sum(bat_samples)/len(bat_samples))/65535
+    return vol_div*adc_ref*(sum(bat_samples)/len(bat_samples))/65535 + phys_offset

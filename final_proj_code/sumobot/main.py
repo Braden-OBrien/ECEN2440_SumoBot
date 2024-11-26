@@ -1,9 +1,10 @@
-from machine import Pin, PWM
+from machine import Pin, PWM, ADC
 from ir_rx.nec import NEC_8 # Use the NEC 8-bit class
 #from ir_rx.print_error import print_error # for debugging
 from ir_tx.nec import NEC
 import adc_conv
 import time
+import os
 
 
 time.sleep(0.1)
@@ -21,11 +22,15 @@ pwm_rate = 2000
 pwm = min(max(int(2**16 * abs(1)), 0), 65535)
 curr_motor_cond = -1
 
+min_bat_volt = 6.8  #Going below 3.2V/cell is dangerous, set to 3.4V/cell for safety
+operating = True
+
 #Assigning Pinouts
 rf_inputs = [Pin(i, Pin.IN) for i in [11, 12, 15, 14]]
 ir_input = Pin(13, Pin.IN, Pin.PULL_UP)
 input_toggle_btn = Pin(10, Pin.IN, Pin.PULL_DOWN)
 leds = [Pin(i, Pin.OUT) for i in [21, 18, 19, 20]]
+bat_pin_in = ADC(Pin(26, Pin.IN))
 
 ph = [Pin(9, Pin.OUT), Pin(7, Pin.OUT)]
 en = [PWM(8, freq=pwm_rate, duty_u16 = 0), PWM(6, freq=pwm_rate, duty_u16 = 0)]
@@ -121,7 +126,7 @@ def motor_control(cond):
         set_motor(1,1)
 
 #Main loop
-while True:
+while (operating == True):
     for flag_type in [rf_interrupt_flags, ir_interrupt_flags]:
         for command in flag_type:
             #Input handler
@@ -136,10 +141,9 @@ while True:
                 
         flag_type.clear()
     
-   # adc_conv.sample_battery(bat_sample_time, )
-
-    
-   # ir_transmitter.transmit(addr, commands[0])
-   # print('ir signal transmitted addr', addr, 'command', commands[0])
-   # time.sleep(3)
-    continue
+    if (adc_conv.sample_battery(bat_sample_time=1, pin=bat_pin_in) < min_bat_volt):
+        #Prevents further operation of robot while battery voltage is too low. Discourages pushing the limits.
+        operating = False
+        print("Battery Voltage Low")
+        while True:
+            continue
