@@ -7,7 +7,7 @@ time.sleep(0.1)
 
 min_bat_volt = 10000
 
-bat_pin_in = ADC(Pin(26, Pin.IN))
+bat_pin_in = ADC(Pin(28, Pin.IN))
 #gnd_pin_in = ADC(Pin(27, Pin.IN))
 #ref_pin_in = ADC(Pin(28, Pin.IN))
 

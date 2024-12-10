@@ -1,6 +1,6 @@
 import time
 
-def sample_battery(bat_sample_time, pin, ref_pin=None, adc_ref=3.3, vol_div=3, phys_offset=0.2423):
+def sample_battery(bat_sample_time, pin, ref_pin=None, adc_ref=3.3, vol_div=3, phys_offset=0.2080162):
     """
     Samples the battery for specified time at the specified ADC pin:
         bat_sample_time: time (in ms) to sample the battery

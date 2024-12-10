@@ -19,26 +19,29 @@ time.sleep(0.1)
 debounce_time = 100 #50ms debounce timer
 bat_sample_time = 100
 pwm_rate = 2000
-pwm = min(max(int(2**16 * abs(1)), 0), 65535)
+pwm = [min(max(int(2**16 * abs(1)), 0), 16000), min(max(int(2**16 * abs(1)), 0), 20000)]
 curr_motor_cond = -1
 
+#Assigning Pinouts
+rf_inputs = [Pin(i, Pin.IN) for i in [6, 4, 7, 5]] #6, 4, 7, 5
+ir_input = Pin(18, Pin.IN, Pin.PULL_UP)
+bat_low_led = Pin(3, Pin.OUT)
+#input_toggle_btn = Pin(10, Pin.IN, Pin.PULL_DOWN)
+#leds = [Pin(i, Pin.OUT) for i in [21, 18, 19, 20]]
+bat_pin_in = ADC(Pin(28, Pin.IN))
+
+ph = [Pin(12, Pin.OUT), Pin(14, Pin.OUT)]
+en = [PWM(13, freq=pwm_rate, duty_u16 = 0), PWM(15, freq=pwm_rate, duty_u16 = 0)]
+
+#Battery Vars
 min_bat_volt = 6.8  #Going below 3.2V/cell is dangerous, set to 3.4V/cell for safety
 operating = True
-
-#Assigning Pinouts
-rf_inputs = [Pin(i, Pin.IN) for i in [11, 12, 15, 14]]
-ir_input = Pin(13, Pin.IN, Pin.PULL_UP)
-input_toggle_btn = Pin(10, Pin.IN, Pin.PULL_DOWN)
-leds = [Pin(i, Pin.OUT) for i in [21, 18, 19, 20]]
-bat_pin_in = ADC(Pin(26, Pin.IN))
-
-ph = [Pin(9, Pin.OUT), Pin(7, Pin.OUT)]
-en = [PWM(8, freq=pwm_rate, duty_u16 = 0), PWM(6, freq=pwm_rate, duty_u16 = 0)]
+bat_low_led.value(0)
 
 #Interrupt flags
 rf_interrupt_flags = []
 ir_interrupt_flags = []
-input_toggle = 1 # 1 - RF Receiver | 0 - IR Receiver
+input_toggle = 0 # 1 - RF Receiver | 0 - IR Receiver
 
 #Defining ISRs
 def rf_ISR(input):
@@ -80,9 +83,10 @@ def input_toggle_ISR(btn):
 for input in rf_inputs:
     input.irq(trigger=input.IRQ_RISING, handler=rf_ISR)
     
+    
 ir_receiver = NEC_8(ir_input, callback=ir_ISR)
 
-input_toggle_btn.irq(trigger=input_toggle_btn.IRQ_FALLING, handler=input_toggle_ISR)
+#input_toggle_btn.irq(trigger=input_toggle_btn.IRQ_FALLING, handler=input_toggle_ISR)
 
 #Motor Control
 def set_motor(motor, cond):
@@ -91,10 +95,10 @@ def set_motor(motor, cond):
         en[motor].duty_u16(0)
     elif cond == 0:   #Forwards
         ph[motor].low()
-        en[motor].duty_u16(pwm)
+        en[motor].duty_u16(pwm[motor])
     elif cond == 1:   #Backwards
         ph[motor].high()
-        en[motor].duty_u16(pwm)
+        en[motor].duty_u16(pwm[motor])
         
 def motor_control(cond):
     global curr_motor_cond
@@ -126,7 +130,7 @@ def motor_control(cond):
         set_motor(1,1)
 
 #Main loop
-while (operating == True):
+while True:
     for flag_type in [rf_interrupt_flags, ir_interrupt_flags]:
         for command in flag_type:
             #Input handler
@@ -134,16 +138,17 @@ while (operating == True):
             print('Acting on flag_type', flag_type)
             
             print('toggling led on', command)
-            leds[command].toggle()
+            #leds[command].toggle()
             
             print('setting motors to condition', command)
             motor_control(command)
                 
         flag_type.clear()
     
-    if (adc_conv.sample_battery(bat_sample_time=1, pin=bat_pin_in) < min_bat_volt):
+    if (adc_conv.sample_battery(bat_sample_time=75, pin=bat_pin_in) < min_bat_volt):
         #Prevents further operation of robot while battery voltage is too low. Discourages pushing the limits.
-        operating = False
+        #operating = False
+        bat_low_led.value(1)
         print("Battery Voltage Low")
-        while True:
-            continue
+        #while True:
+        #    continue
