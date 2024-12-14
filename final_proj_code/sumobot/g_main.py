@@ -1,10 +1,10 @@
-from machine import Pin, PWM, ADC, Timer
+from machine import Pin, PWM, ADC
 from ir_rx.nec import NEC_8 # Use the NEC 8-bit class
-from ir_rx.print_error import print_error
 #from ir_rx.print_error import print_error # for debugging
 import adc_conv
 import time
 import os
+
 
 time.sleep(0.1)
 
@@ -15,11 +15,10 @@ time.sleep(0.1)
 
 
 #Global constants
-but_debounce_time = 100 #50ms debounce timer
-rf_deb_tim = Timer()
+debounce_time = 100 #50ms debounce timer
 bat_sample_time = 100
 pwm_rate = 2000
-pwm = [min(max(int(2**16 * abs(1)), 0), 60000), min(max(int(2**16 * abs(1)), 0), 60000)]
+pwm = [min(max(int(2**16 * abs(1)), 0), 65535), min(max(int(2**16 * abs(1)), 0), 65535)]
 curr_motor_cond = -1
 
 #Assigning Pinouts
@@ -43,43 +42,14 @@ rf_interrupt_flags = []
 ir_interrupt_flags = []
 input_toggle = 1 # 1 - RF Receiver | 0 - IR Receiver
 
-def send_command(input):
-    global rf_interrupt_flags, ir_interrupt_flags, rf_inputs, input_toggle
-    if (input_toggle):
+#Defining ISRs
+def rf_ISR(input):
+    global rf_interrupt_flags, rf_inputs, input_toggle
+    
+    if input_toggle:
         index = rf_inputs.index(input)
         print('RF input received on', index)
         rf_interrupt_flags.append(index)
-    else:
-        print('IR signal is', input)
-        ir_interrupt_flags.append(int(input))
-
-
-rf_debounce = 0
-def rf_deb_callback(t, rf_in):
-    global rf_debounce
-    print('timer callback')
-    print(rf_in.value())
-    if (rf_in.value() == 0):
-        send_command(rf_in)
-        rf_debounce = 0
-
-#Defining ISRs
-def rf_ISR(input):
-    global input_toggle, rf_debounce
-    
-    print(input.value())
-    if (input.value() == 0):
-        print('falling edge received, starting debounce timer')
-        rf_debounce = 1
-        rf_deb_tim.init(mode=Timer.ONE_SHOT, period=100, callback=lambda t: rf_deb_callback(t, input))
-        return
-    
-    if (rf_debounce):
-        print('skipping op')
-        return
-    
-    if input_toggle:
-        send_command(input)
     else:
         print('RF input received on IR Mode. Input Ignored.')
     
@@ -91,15 +61,16 @@ def ir_ISR(data, addr_, _):
             print('IR input received on improper address. Input Ignored.')
             return
         else:
-            send_command(data)
+            print('IR input received on', addr_, 'with data', data)
+            ir_interrupt_flags.append(int(data))
     else:
         print('IR input received on RF Mode. Input Ignored.')
 
-but_debounce = 0
+debounce = 0
 def input_toggle_ISR(btn):
     global input_toggle, debounce
     
-    if (time.ticks_ms() - but_debounce > but_debounce_time):
+    if (time.ticks_ms() - debounce > debounce_time):
         input_toggle = not input_toggle
         if input_toggle:
             print('Now in RF Mode')
@@ -111,9 +82,8 @@ def input_toggle_ISR(btn):
 for input in rf_inputs:
     input.irq(trigger=(input.IRQ_RISING | input.IRQ_FALLING), handler=rf_ISR)
     
+    
 ir_receiver = NEC_8(ir_input, callback=ir_ISR)
-ir_receiver.error_function(print_error)
-
 
 #input_toggle_btn.irq(trigger=input_toggle_btn.IRQ_FALLING, handler=input_toggle_ISR)
 
@@ -178,6 +148,6 @@ while True:
         #Prevents further operation of robot while battery voltage is too low. Discourages pushing the limits.
         #operating = False
         bat_low_led.value(1)
-        #print("Battery Voltage Low")
+        print("Battery Voltage Low")
         #while True:
         #    continue

@@ -2,188 +2,263 @@ import ir_tx, machine, time, seesaw
 from ir_tx.nec import NEC
 from machine import I2C, Pin
 
-# Initialze Remote-Mode LED's (Green = IR; Blue = RF)
+# Initialize ADC pin (GPIO Pin 26 / ADC 0)
+adc = machine.ADC(26) 
+
+# Initialize battery voltage indicator LED's
+fullBatteryLED = Pin(22, Pin.OUT, Pin.PULL_DOWN)
+medBatteryLED = Pin(19, Pin.OUT, Pin.PULL_DOWN)
+lowBatteryLED = Pin(18, Pin.OUT, Pin.PULL_DOWN)
+
+# Initialize Remote-Mode LED's (Green = IR; Blue = RF)
 IR_Mode_LED = Pin(0, Pin.OUT, Pin.PULL_DOWN)
 RF_Mode_LED = Pin(1, Pin.OUT, Pin.PULL_DOWN)
 
 # Initialize Mode Button
 mode_toggle_button = Pin(4, Pin.IN, Pin.PULL_UP)
 
-# Initialize I2C. Adjust pin numbers based on your Pico's configuration
+# Initialize I2C
 i2c = I2C(0, scl=Pin(21), sda=Pin(20))
 
 # Initialize the Seesaw driver with the I2C interface
-# Use the Gamepad QT's I2C address from the Arduino code (0x50)
 seesaw_device = seesaw.Seesaw(i2c, addr=0x50)
 
 # Initialize IR Transmitter pin
 tx_pin = Pin(16, Pin.OUT, value = 0)
-device_addr = 0x01                      # Example address
-transmitter = NEC(tx_pin)               # List of commands to send
-commands = [0x01,0x02,0x03,0x04,0x05,0x06]
+device_addr = 0x21
+transmitter = NEC(tx_pin)
+commands = [0x00, 0x01, 0x02, 0x03]
 
-# Initialize RF Transmitter pins
-RF4emitter = Pin(13, Pin.OUT, Pin.PULL_DOWN)
-RF3emitter = Pin(12, Pin.OUT, Pin.PULL_DOWN)
-RF2emitter = Pin(11, Pin.OUT, Pin.PULL_DOWN)
-RF1emitter = Pin(10, Pin.OUT, Pin.PULL_DOWN)
-
-# Define button and joystick pin numbers as per the Arduino code
-BUTTON_A = 5
-BUTTON_B = 1
-BUTTON_X = 6
-BUTTON_Y = 2
-BUTTON_START = 16
-BUTTON_SELECT = 0
-JOYSTICK_X_PIN = 14
-JOYSTICK_Y_PIN = 15
-BUTTONS_MASK = (1 << BUTTON_X) | (1 << BUTTON_Y) | (1 << BUTTON_A) | (1 << BUTTON_B) | (1 << BUTTON_SELECT) | (1 << BUTTON_START)
+# Define button mappings
+BUTTONS = {
+    "A": 5,
+    "B": 1,
+    "X": 6,
+    "Y": 2,
+    "START": 16,
+    "SELECT": 0,
+}
+BUTTONS_MASK = (1 << BUTTONS["X"]) | (1 << BUTTONS["Y"]) | (1 << BUTTONS["A"]) | (1 << BUTTONS["B"]) | (1 << BUTTONS["SELECT"]) | (1 << BUTTONS["START"])
 
 # Initialize IR Emitter states
 emitter_states = {
-   BUTTON_A: False,
-   BUTTON_B: False,
-   BUTTON_X: False,
-   BUTTON_Y: False,
-   BUTTON_START: False,
-   BUTTON_SELECT: False
+   BUTTONS["A"]: False,
+   BUTTONS["B"]: False,
+   BUTTONS["X"]: False,
+   BUTTONS["Y"]: False,
+   BUTTONS["START"]: False,
+   BUTTONS["SELECT"]: False
 }
 
-# Initialize last button states
-last_buttons = 0
+# Initialize RF Transmitter pins
+RF_pins = {
+    "RF1": Pin(10, Pin.OUT),
+    "RF2": Pin(11, Pin.OUT),
+    "RF3": Pin(12, Pin.OUT),
+    "RF4": Pin(13, Pin.OUT),
+}
 
-# Initialize joystick center position
-joystick_center_x = 511
-joystick_center_y = 497
+# Define joystick mappings
+JOYSTICK_X_PIN = 14
+JOYSTICK_Y_PIN = 15
+joystick_threshold = 50
+
+# Initialize joystick center position (calibrate during setup)
+joystick_center_x = seesaw_device.analog_read(JOYSTICK_X_PIN)
+joystick_center_y = seesaw_device.analog_read(JOYSTICK_Y_PIN)
 
 # Mode selection (0 = IR, 1 = RF)
-mode = 0  # Default to IR mode
-IR_Mode_LED.value(1)
+mode = 0
+print("Default Transmission Mode: IR")
 RF_Mode_LED.value(0)
+IR_Mode_LED.value(1)
+last_toggle_time = 0
 
-# Interrupt handler for mode toggle button press
-def mode_toggle_press(pin):
-     global mode
-     mode = 1 - mode  # Toggle between 0 (IR) and 1 (RF)
+# Checks the voltage of the battery
+def read_battery_voltage():
+    raw = adc.read_u16()  # 16-bit ADC value
+    scaled_voltage = (raw / 65535.0) * 3.56  # Convert to ADC voltage
+    battery_voltage = scaled_voltage / 0.319  # Reverse the voltage divider scaling
+    return battery_voltage
+
+# Changes the LEDS for the ADC Battery Indicator
+def update_leds(voltage):
+    if voltage >= 7.54:  # Fully charged
+        fullBatteryLED.value(1)
+        medBatteryLED.value(0)
+        lowBatteryLED.value(0)
+    elif 7.0 <= voltage < 7.54:  # Medium battery
+        fullBatteryLED.value(0)
+        medBatteryLED.value(1)
+        lowBatteryLED.value(0)
+    elif 6.8 <= voltage < 7.0:  # Low battery
+        fullBatteryLED.value(0)
+        medBatteryLED.value(0)
+        lowBatteryLED.value(1)
+    else:  # Super low battery
+        fullBatteryLED.value(0)
+        medBatteryLED.value(0)
+        # Flash the red LED
+        for _ in range(5):  # Flash 5 times
+            lowBatteryLED.value(1)
+            time.sleep_ms(100)
+            lowBatteryLED.value(0)
+            time.sleep_ms(100)
+
+# Configure the pin modes for buttons.
+def setup_buttons():
+    seesaw_device.pin_mode_bulk(BUTTONS_MASK, seesaw_device.INPUT_PULLUP)
     
-     if mode == 0:
-          IR_Mode_LED.value(1)  # Turn on IR LED (green)
-          RF_Mode_LED.value(0)  # Turn off RF LED (blue)
-          print("Mode switched to IR.")
-     else:
-          IR_Mode_LED.value(0)  # Turn off IR LED (green)
-          RF_Mode_LED.value(1)  # Turn on RF LED (blue)
-          print("Mode switched to RF.")
+# Set as input to release the pin (high-impedance)
+def turn_off_RFpins():
+    RF_pins["RF1"].init(Pin.IN)  
+    RF_pins["RF2"].init(Pin.IN)
+    RF_pins["RF3"].init(Pin.IN)
+    RF_pins["RF4"].init(Pin.IN)
+
+# Interrupt handler for mode toggle button
+def mode_toggle_handler(pin):
+    global mode, last_toggle_time
+    turn_off_RFpins()
+    current_time = time.ticks_ms()
+    if time.ticks_diff(current_time, last_toggle_time) > 200:  # 200ms debounce
+        mode = 1 - mode
+        if mode == 0:
+            IR_Mode_LED.value(1)
+            RF_Mode_LED.value(0)
+            print("Mode switched to IR.")
+        else:
+            IR_Mode_LED.value(0)
+            RF_Mode_LED.value(1)
+            print("Mode switched to RF.")
+        last_toggle_time = current_time
 
 # Attach interrupt handler to pin
-mode_toggle_button.irq(trigger=Pin.IRQ_FALLING, handler=mode_toggle_press)      
+mode_toggle_button.irq(trigger=Pin.IRQ_FALLING, handler=mode_toggle_handler)
 
-def setup_buttons():               # Configure the pin modes for buttons.    
-     seesaw_device.pin_mode_bulk(BUTTONS_MASK, seesaw_device.INPUT_PULLUP)
-     # Debugging to check the setup of BUTTON_SELECT
-     # print(f"BUTTON_SELECT pin mode: {seesaw_device.pin_mode(BUTTON_SELECT)}")
+# Handle button press
+def handle_button_press(button_name):
+    global mode
+    print(f"Button {button_name} pressed.")
+    if mode == 0:  # IR Mode
+        command_map = {5: 3, 1: 1, 6: 0, 2: 2}
+        if button_name in command_map:
+            transmitter.transmit(device_addr, commands[command_map[button_name]])
+            print(f"IR Command {hex(commands[command_map[button_name]])} transmitted.")
+    elif mode == 1:  # RF Mode
+        RF_pin_map = {5: "RF1", 1: "RF2", 6: "RF3", 2: "RF4"}
+        if button_name in RF_pin_map:
+            # for pin in RF_pins.values():
+                # pin.init(Pin.IN)
+            RF_pins[RF_pin_map[button_name]].init(Pin.OUT)
+            print(f"{RF_pin_map[button_name]} activated.")
+            time.sleep_ms(3000)
+            RF_pins[RF_pin_map[button_name]].init(Pin.IN)
+            print(f"{RF_pin_map[button_name]} deactivated.")
 
-def read_buttons():                # Read and return the state of each button.
+# Joystick handler (polling, unavoidable for analog input)
+def check_joystick():
+    global mode
+    current_x = seesaw_device.analog_read(JOYSTICK_X_PIN)
+    current_y = seesaw_device.analog_read(JOYSTICK_Y_PIN)
+    
+    # If in IR Mode
+    if mode == 0:
+        if abs(current_x - joystick_center_x) > joystick_threshold:
+            direction = "right" if current_x < joystick_center_x else "left"
+            print(f"Joystick moved {direction}.")
+            if direction == "right":
+                transmitter.transmit(device_addr, commands[2])  
+                print("COMMANDS",hex(commands[2]),"TRANSMITTED.")
+            elif direction == "left":
+                transmitter.transmit(device_addr, commands[3])  
+                print("COMMANDS",hex(commands[3]),"TRANSMITTED.")
+        if abs(current_y - joystick_center_y) > joystick_threshold:
+            direction = "up" if current_y < joystick_center_y else "down"
+            print(f"Joystick moved {direction}.")
+            if direction == "up":
+                transmitter.transmit(device_addr, commands[0])  
+                print("COMMANDS",hex(commands[0]),"TRANSMITTED.")
+            elif direction == "down":
+                transmitter.transmit(device_addr, commands[1])  
+                print("COMMANDS",hex(commands[1]),"TRANSMITTED.")
+    # If in RF Mode
+    elif mode == 1:
+        if abs(current_x - joystick_center_x) > joystick_threshold:
+            direction = "right" if current_x < joystick_center_x else "left"
+            print(f"Joystick moved {direction}.")
+            if direction == "right":
+                RF_pins["RF1"].init(Pin.OUT)
+                print("RF1 activated.")
+                time.sleep_ms(3000)
+                RF_pins["RF1"].init(Pin.IN)
+                print("RF1 deactivated.")
+            elif direction == "left":
+                RF_pins["RF4"].init(Pin.OUT)
+                print("RF4 activated.")
+                time.sleep_ms(3000)
+                RF_pins["RF4"].init(Pin.IN)
+                print("RF4 deactivated.")
+        if abs(current_y - joystick_center_y) > joystick_threshold:
+            direction = "up" if current_y < joystick_center_y else "down"
+            print(f"Joystick moved {direction}.")
+            if direction == "up":
+                RF_pins["RF3"].init(Pin.OUT)
+                print("RF3 activated.")
+                time.sleep_ms(3000)
+                RF_pins["RF3"].init(Pin.IN)
+                print("RF3 deactivated.")
+            elif direction == "down":
+                RF_pins["RF2"].init(Pin.OUT)
+                print("RF2 activated.")
+                time.sleep_ms(3000)
+                RF_pins["RF2"].init(Pin.IN)
+                print("RF2 deactivated.")
+
+# Calibrate joystick center position during setup
+def calibrate_joystick():
+    global joystick_center_x, joystick_center_y
+    joystick_center_x = seesaw_device.analog_read(JOYSTICK_X_PIN)
+    joystick_center_y = seesaw_device.analog_read(JOYSTICK_Y_PIN)
+    print(f"Joystick calibrated: Center X = {joystick_center_x}, Center Y = {joystick_center_y}")
+
+# Read and return the state of each button.
+def read_buttons():                
      return seesaw_device.digital_read_bulk(BUTTONS_MASK)
-     print(f"Read buttons: {bin(button_state)}")  # Debug print of all buttons' states
-     
-def turn_off_RFpins():             # Resets all RF emitter pins to 0V
-     RF1emitter.value(0)
-     RF2emitter.value(0)
-     RF3emitter.value(0)
-     RF4emitter.value(0)
 
-def handle_button_press(button):    # Send corresponding NEC command on button press.
-   global emitter_states, mode
-   emitter_states[button] = not emitter_states[button]
-   
-   # For IR Mode:
-   if mode == 0:
-        if button == BUTTON_A:
-             transmitter.transmit(device_addr, commands[0])  
-             print("COMMANDS",hex(commands[0]),"TRANSMITTED.")
-        elif button == BUTTON_B:
-             transmitter.transmit(device_addr, commands[1])  
-             print("COMMANDS",hex(commands[1]),"TRANSMITTED.")
-        elif button == BUTTON_X:
-             transmitter.transmit(device_addr, commands[2])  
-             print("COMMANDS",hex(commands[2]),"TRANSMITTED.")
-        elif button == BUTTON_Y:
-             transmitter.transmit(device_addr, commands[3])  
-             print("COMMANDS",hex(commands[3]),"TRANSMITTED.")
-        print("Button", button, "is", "pressed" if emitter_states[button] else "released")
-   # For RF Mode
-   elif mode == 1:
-        if button == BUTTON_A:
-             RF1emitter.value(1)
-             print("D0 Active")
-        elif button == BUTTON_B:
-             RF2emitter.value(1)
-             print("D1 Active")
-        elif button == BUTTON_X:
-             RF3emitter.value(1)
-             print("D2 Active")
-        elif button == BUTTON_Y:
-             RF4emitter.value(1)
-             print("D3 Active")                      
-
-
-# Main Loop
+# Main function
 def main():
-   global last_buttons  # Ensure last_buttons is recognized as a global variable
+    global last_buttons     # Ensure last_buttons is recognized as a global variable
+    turn_off_RFpins()       # ALso make sure that the RF transmitter is off
 
-   setup_buttons()
-
-   last_x, last_y = seesaw_device.analog_read(JOYSTICK_X_PIN), seesaw_device.analog_read(JOYSTICK_Y_PIN)
-   joystick_threshold = 50  # Adjust threshold as needed
-
-   while True:
-       current_buttons = read_buttons()
+    setup_buttons()
+    last_buttons = read_buttons()
+    
+    last_time = time.ticks_ms()  # Record the initial time
+    interval = 2000  # 2 seconds in milliseconds
+    
+    while True:
+        # Check if 2 seconds have passed
+        if time.ticks_diff(time.ticks_ms(), last_time) >= interval:
+            voltage = read_battery_voltage()
+            update_leds(voltage)
+            print("Battery Voltage: ", voltage)
+            last_time = time.ticks_ms()  # Reset the timer
+        
+        current_buttons = read_buttons()
        
-       # Check if button state has changed
-       for button in emitter_states:
-           if current_buttons & (1 << button) and not last_buttons & (1 << button):
-               handle_button_press(button)
-
-       # Read joystick values
-       current_x = seesaw_device.analog_read(JOYSTICK_X_PIN)
-       current_y = seesaw_device.analog_read(JOYSTICK_Y_PIN)
-
-       # Check if joystick position has changed significantly
-       if abs(current_x - last_x) > joystick_threshold or abs(current_y - last_y) > joystick_threshold:
-           print("Joystick moved - X:", current_x, ", Y:", current_y)
-           last_x, last_y = current_x, current_y
-
-           if mode == 0:      # If in IR mode
-                # Determine which NEC command to send based on joystick direction
-              if current_y < joystick_center_y - joystick_threshold:       # Joystick moved up
-                   transmitter.transmit(device_addr, commands[0])  
-                   print("COMMANDS",hex(commands[0]),"TRANSMITTED.")
-              elif current_y > joystick_center_y + joystick_threshold:     # Joystick moved down
-                   transmitter.transmit(device_addr, commands[1])  
-                   print("COMMANDS",hex(commands[1]),"TRANSMITTED.")
-              elif current_x < joystick_center_x - joystick_threshold:     # Joystick moved left
-                   transmitter.transmit(device_addr, commands[2])  
-                   print("COMMANDS",hex(commands[2]),"TRANSMITTED.")
-              elif current_x > joystick_center_x + joystick_threshold:     # Joystick moved right
-                   transmitter.transmit(device_addr, commands[3])  
-                   print("COMMANDS",hex(commands[3]),"TRANSMITTED.")
-           elif mode == 1:    # If in RF mode
-               if current_y < joystick_center_y - joystick_threshold:
-                   RF1emitter.value(1)
-                   print("Joystick moved up (RF).")
-               elif current_y > joystick_center_y + joystick_threshold:
-                   RF2emitter.value(1)
-                   print("Joystick moved down (RF).")
-               elif current_x < joystick_center_x - joystick_threshold:
-                   RF3emitter.value(1)
-                   print("Joystick moved right (RF).")
-               elif current_x > joystick_center_x + joystick_threshold:
-                   RF4emitter.value(1)
-                   print("Joystick moved left (RF).")
-
-       last_buttons = current_buttons
-       time.sleep_ms(100)  # Delay to prevent overwhelming the output
+        # Check if button state has changed
+        for BUTTONS in emitter_states:
+           if current_buttons & (1 << BUTTONS) and not last_buttons & (1 << BUTTONS):
+               handle_button_press(BUTTONS)
+        
+        check_joystick()
+        time.sleep_ms(100)  # Adjust delay as necessary
+        
+        last_buttons = current_buttons
+        time.sleep_ms(100)  # Delay to prevent overwhelming the output
 
 if __name__ == "__main__":
-   main()
+    calibrate_joystick()
+    main()
+
